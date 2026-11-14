@@ -2,7 +2,6 @@
 import os
 import re
 import ast
-import uuid
 import importlib.util
 import sys
 
@@ -17,9 +16,14 @@ from flask import (
     url_for,
     flash,
     session,
-    send_file,
-    abort
+    abort,
+    Response
 )
+
+
+# --------------------------------------------------
+# PROJECT DIRECTORIES
+# --------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent
 
@@ -28,15 +32,19 @@ UPLOAD_DIR = ROOT / 'uploads'
 TEMPLATE_DIR = ROOT / 'templates'
 STATIC_DIR = ROOT / 'static'
 
-PLUGIN_DIR.mkdir(exist_ok=True)
-UPLOAD_DIR.mkdir(exist_ok=True)
-TEMPLATE_DIR.mkdir(exist_ok=True)
-STATIC_DIR.mkdir(exist_ok=True)
+PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-# Explicitly tell Flask where the website files are.
+
+# --------------------------------------------------
+# FLASK APPLICATION
+# --------------------------------------------------
+
 app = Flask(
     __name__,
     template_folder=str(TEMPLATE_DIR),
@@ -48,14 +56,45 @@ app.secret_key = os.environ.get(
     'change-this-secret-before-deployment'
 )
 
+
+# --------------------------------------------------
+# TEMPLATE DIRECTORY DIAGNOSTICS
+# --------------------------------------------------
+
+app.logger.warning("MATH VISION ROOT: %s", ROOT)
+
+app.logger.warning(
+    "TEMPLATE DIRECTORY: %s",
+    TEMPLATE_DIR
+)
+
+app.logger.warning(
+    "TEMPLATE DIRECTORY EXISTS: %s",
+    TEMPLATE_DIR.exists()
+)
+
+app.logger.warning(
+    "TEMPLATE FILES FOUND: %s",
+    [p.name for p in TEMPLATE_DIR.glob('*')]
+)
+
+
+# --------------------------------------------------
+# ADMINISTRATOR PASSWORD
+# --------------------------------------------------
+
 ADMIN_PASSWORD = os.environ.get(
     'MATH_VISION_ADMIN_PASSWORD',
     ''
 )
 
 
-# Automatically discover available diagram generators.
+# --------------------------------------------------
+# AUTOMATIC GENERATOR DISCOVERY
+# --------------------------------------------------
+
 def discover_generators():
+
     found = []
 
     for path in sorted(PLUGIN_DIR.glob('*.py')):
@@ -64,26 +103,40 @@ def discover_generators():
             continue
 
         try:
+
             spec = importlib.util.spec_from_file_location(
                 'mv_plugin_' + path.stem,
                 path
             )
 
+            if spec is None or spec.loader is None:
+                continue
+
             mod = importlib.util.module_from_spec(spec)
+
             spec.loader.exec_module(mod)
 
-            if not isinstance(getattr(mod, 'NAME', None), str):
+            if not isinstance(
+                getattr(mod, 'NAME', None),
+                str
+            ):
                 continue
 
-            if not isinstance(getattr(mod, 'FIELDS', None), list):
+            if not isinstance(
+                getattr(mod, 'FIELDS', None),
+                list
+            ):
                 continue
 
-            if not callable(getattr(mod, 'generate', None)):
+            if not callable(
+                getattr(mod, 'generate', None)
+            ):
                 continue
 
             found.append((path.stem, mod))
 
         except Exception as exc:
+
             app.logger.warning(
                 'Could not load generator %s: %s',
                 path.name,
@@ -93,7 +146,10 @@ def discover_generators():
     return found
 
 
-# Administrator access protection.
+# --------------------------------------------------
+# ADMINISTRATOR ACCESS PROTECTION
+# --------------------------------------------------
+
 def admin_required(fn):
 
     @wraps(fn)
@@ -107,7 +163,10 @@ def admin_required(fn):
     return wrapper
 
 
-# Main homepage.
+# --------------------------------------------------
+# MAIN HOMEPAGE
+# --------------------------------------------------
+
 @app.route('/')
 def home():
 
@@ -120,7 +179,10 @@ def home():
     )
 
 
-# Diagram generator page.
+# --------------------------------------------------
+# DIAGRAM GENERATOR PAGE
+# --------------------------------------------------
+
 @app.route('/generator/<slug>', methods=['GET', 'POST'])
 def generator(slug):
 
@@ -144,7 +206,8 @@ def generator(slug):
 
         values = {
             field['name']: request.form.get(
-                field['name'], ''
+                field['name'],
+                ''
             ).strip()
             for field in mod.FIELDS
         }
@@ -154,6 +217,7 @@ def generator(slug):
             svg, description = mod.generate(values)
 
             if not isinstance(svg, str) or '<svg' not in svg[:500]:
+
                 raise ValueError(
                     'Generator did not return a valid SVG diagram.'
                 )
@@ -162,7 +226,12 @@ def generator(slug):
             session['last_title'] = mod.NAME
 
         except Exception as exc:
+
             error = str(exc)
+
+            app.logger.exception(
+                'Diagram generation failed'
+            )
 
     return render_template(
         'generator.html',
@@ -175,7 +244,10 @@ def generator(slug):
     )
 
 
-# Download generated diagrams.
+# --------------------------------------------------
+# DOWNLOAD GENERATED DIAGRAM
+# --------------------------------------------------
+
 @app.route('/download')
 def download():
 
@@ -183,8 +255,6 @@ def download():
 
     if not svg:
         abort(404)
-
-    from flask import Response
 
     name = re.sub(
         r'[^a-z0-9_-]+',
@@ -197,16 +267,20 @@ def download():
         mimetype='image/svg+xml',
         headers={
             'Content-Disposition':
-            f'attachment; filename={name}.svg'
+                f'attachment; filename={name}.svg'
         }
     )
 
 
-# Administrator login.
+# --------------------------------------------------
+# ADMINISTRATOR LOGIN
+# --------------------------------------------------
+
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_login():
 
     if not ADMIN_PASSWORD:
+
         return render_template(
             'admin_login.html',
             disabled=True
@@ -218,7 +292,9 @@ def admin_login():
 
             session['admin'] = True
 
-            return redirect(url_for('admin_dashboard'))
+            return redirect(
+                url_for('admin_dashboard')
+            )
 
         flash('The password was not accepted.')
 
@@ -228,7 +304,10 @@ def admin_login():
     )
 
 
-# Administrator dashboard.
+# --------------------------------------------------
+# ADMINISTRATOR DASHBOARD
+# --------------------------------------------------
+
 @app.route('/admin/dashboard')
 @admin_required
 def admin_dashboard():
@@ -242,7 +321,10 @@ def admin_dashboard():
     )
 
 
-# Upload new diagram generators.
+# --------------------------------------------------
+# UPLOAD NEW DIAGRAM GENERATORS
+# --------------------------------------------------
+
 @app.route('/admin/upload', methods=['POST'])
 @admin_required
 def admin_upload():
@@ -251,9 +333,13 @@ def admin_upload():
 
     if not file or not file.filename.lower().endswith('.py'):
 
-        flash('Choose a Python generator file ending in .py.')
+        flash(
+            'Choose a Python generator file ending in .py.'
+        )
 
-        return redirect(url_for('admin_dashboard'))
+        return redirect(
+            url_for('admin_dashboard')
+        )
 
     filename = Path(file.filename).name
 
@@ -266,26 +352,33 @@ def admin_upload():
             'Use a simple filename with letters, numbers, underscores or hyphens.'
         )
 
-        return redirect(url_for('admin_dashboard'))
+        return redirect(
+            url_for('admin_dashboard')
+        )
 
-    source = file.read(200_001)
+    source = file.read(200001)
 
-    if len(source) > 200_000:
+    if len(source) > 200000:
 
-        flash('The file is too large (maximum 200 KB).')
+        flash(
+            'The file is too large. Maximum size is 200 KB.'
+        )
 
-        return redirect(url_for('admin_dashboard'))
+        return redirect(
+            url_for('admin_dashboard')
+        )
 
     try:
 
         text = source.decode('utf-8')
+
         tree = ast.parse(text)
 
         top = {
-            n.name
-            for n in tree.body
+            node.name
+            for node in tree.body
             if isinstance(
-                n,
+                node,
                 (
                     ast.FunctionDef,
                     ast.AsyncFunctionDef,
@@ -295,69 +388,103 @@ def admin_upload():
         }
 
         assigns = {
-            t.id
-            for n in tree.body
-            if isinstance(n, (ast.Assign, ast.AnnAssign))
-            for t in (
-                n.targets
-                if isinstance(n, ast.Assign)
-                else [n.target]
+            target.id
+            for node in tree.body
+            if isinstance(
+                node,
+                (ast.Assign, ast.AnnAssign)
             )
-            if isinstance(t, ast.Name)
+            for target in (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+            )
+            if isinstance(target, ast.Name)
         }
 
-        if not {'NAME', 'DESCRIPTION', 'FIELDS'}.issubset(assigns):
+        if not {
+            'NAME',
+            'DESCRIPTION',
+            'FIELDS'
+        }.issubset(assigns):
+
             raise ValueError(
                 'The generator must define NAME, DESCRIPTION, FIELDS and generate(values).'
             )
 
         if 'generate' not in top:
+
             raise ValueError(
                 'The generator must define generate(values).'
             )
 
-        compile(tree, filename, 'exec')
+        compile(
+            tree,
+            filename,
+            'exec'
+        )
 
     except Exception as exc:
 
-        flash('Generator validation failed: ' + str(exc))
+        flash(
+            'Generator validation failed: ' + str(exc)
+        )
 
-        return redirect(url_for('admin_dashboard'))
+        return redirect(
+            url_for('admin_dashboard')
+        )
 
-    # Python plugins execute on the server.
-    # Upload only code you wrote and trust.
+    # Only upload Python generator files you trust.
     (PLUGIN_DIR / filename).write_text(
         text,
         encoding='utf-8'
     )
 
     flash(
-        'Generator uploaded. It is now discovered by the main application. Test it before announcing it to learners.'
+        'Generator uploaded successfully. It is now available for automatic discovery.'
     )
 
-    return redirect(url_for('admin_dashboard'))
+    return redirect(
+        url_for('admin_dashboard')
+    )
 
 
-# Administrator logout.
+# --------------------------------------------------
+# ADMINISTRATOR LOGOUT
+# --------------------------------------------------
+
 @app.route('/admin/logout')
 def admin_logout():
 
     session.clear()
 
-    return redirect(url_for('home'))
+    return redirect(
+        url_for('home')
+    )
 
 
-# Application health check.
+# --------------------------------------------------
+# APPLICATION HEALTH CHECK
+# --------------------------------------------------
+
 @app.route('/health')
 def health():
 
     return {
         'status': 'ok',
-        'generators': len(discover_generators())
+        'generators': len(discover_generators()),
+        'template_directory_exists': TEMPLATE_DIR.exists(),
+        'templates': [
+            p.name
+            for p in TEMPLATE_DIR.glob('*')
+        ]
     }
 
 
-# Run locally.
+# --------------------------------------------------
+# RUN LOCALLY
+# --------------------------------------------------
+
 if __name__ == '__main__':
 
     app.run(
