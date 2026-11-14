@@ -21,6 +21,10 @@ from flask import (
     abort
 )
 
+app.logger.warning("MATH VISION ROOT: %s", ROOT)
+app.logger.warning("TEMPLATE DIRECTORY: %s", TEMPLATE_DIR)
+app.logger.warning("TEMPLATE DIRECTORY EXISTS: %s", TEMPLATE_DIR.exists())
+app.logger.warning("TEMPLATE FILES FOUND: %s", [p.name for p in TEMPLATE_DIR.glob('*')])
 ROOT = Path(__file__).resolve().parent
 
 PLUGIN_DIR = ROOT / 'web_generators'
